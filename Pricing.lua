@@ -44,7 +44,7 @@ local providers = {
 }
 
 -- TSM price sources offered in the options. The first entry is the default.
-local TSM_PRICE_SOURCES = { "DBMinBuyout", "DBMarket", "DBRecent", "DBHistorical", "DBRegionMarketAvg" }
+local TSM_PRICE_SOURCES = { "DBMinBuyout", "DBRecent", "DBMarket" }
 Pricing.TSM_PRICE_SOURCES = TSM_PRICE_SOURCES
 
 function Pricing:GetTSMPriceSource()

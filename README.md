@@ -74,7 +74,7 @@ Crafting Orders++ works without pricing addons, but pricing-aware features are m
   Supports reagent cost, reward valuation, profit display, and shopping export to Snatch when available.
 
 `TradeSkillMaster`
-  Supports reagent cost, reward valuation, and profit display using a TSM price source you choose in the options: `DBMinBuyout` (default), `DBMarket`, `DBRecent`, `DBHistorical`, or `DBRegionMarketAvg`. Shopping lists are still created in Auctionator when it is installed.
+  Supports reagent cost, reward valuation, and profit display using a TSM price source you choose in the options: `DBMinBuyout` (default), `DBRecent`, or `DBMarket`. Shopping lists are still created in Auctionator when it is installed.
 
 When prices are available, the planned materials are the cheapest mix that still reaches the requested quality, so a higher reagent tier is used when it costs less than a lower one. Reward items are valued after the 5% auction house cut.
 
