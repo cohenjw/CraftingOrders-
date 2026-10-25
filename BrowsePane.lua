@@ -3184,7 +3184,13 @@ function Pane:CreateIcon(parent)
 	iconButton.favorite:SetPoint("TOPRIGHT", iconButton, "TOPRIGHT", 3, 2)
 	iconButton.favorite:Hide()
 
-	iconButton.blocked = iconButton:CreateTexture(nil, "HIGHLIGHT")
+	-- Always visible (a HIGHLIGHT layer only draws on mouseover). It sits on its own child frame because text
+	-- is drawn above textures within one layer, so a texture on the icon itself can never cover the count.
+	-- The frame ignores the mouse, so hovering and clicking still reach the icon.
+	iconButton.blockedFrame = CreateFrame("Frame", nil, iconButton)
+	iconButton.blockedFrame:SetAllPoints(iconButton)
+	iconButton.blockedFrame:SetFrameLevel((iconButton:GetFrameLevel() or 0) + 4)
+	iconButton.blocked = iconButton.blockedFrame:CreateTexture(nil, "OVERLAY")
 	iconButton.blocked:SetTexture(DONT_BUY_OVERLAY_TEXTURE)
 	iconButton.blocked:SetSize(18, 18)
 	iconButton.blocked:SetPoint("CENTER", iconButton, "CENTER")
