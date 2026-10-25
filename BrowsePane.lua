@@ -1421,12 +1421,23 @@ local function SelectDefaultSlotOption(slotData)
 	return options[1]
 end
 
+-- What the player still has to buy for an entry: the shortfall at the option's unit price.
+local function GetEntryPurchaseCost(entry)
+	local unitPrice = entry and entry.option and entry.option.unitPrice
+	if not entry or entry.marketValueExcluded or type(unitPrice) ~= "number" or unitPrice <= 0 then
+		return 0
+	end
+
+	return (entry.shortage or 0) * unitPrice
+end
+
 local function CreateMaterialVariant(slotData, components)
 	local variant = {
 		slotData = slotData,
 		entries = {},
 		qualityWeight = 0,
 		scoreTotal = 0,
+		purchaseCost = 0,
 		marketCost = 0,
 		marketCostKnown = true,
 		excludedEntryCount = 0,
@@ -1439,6 +1450,7 @@ local function CreateMaterialVariant(slotData, components)
 			variant.qualityWeight = variant.qualityWeight
 				+ ((QUALITY_WEIGHT_BASE ^ math.max(0, entry.option.reagentQuality or 0)) * (entry.quantity or 0))
 			variant.scoreTotal = variant.scoreTotal + ((entry.option.score or 0) * (entry.quantity or 0))
+			variant.purchaseCost = variant.purchaseCost + GetEntryPurchaseCost(entry)
 			if entry.marketValueExcluded then
 				variant.excludedEntryCount = variant.excludedEntryCount + 1
 			elseif entry.totalPrice then
@@ -1488,6 +1500,10 @@ local function CompareMaterialPlanCost(left, right)
 
 	if left.marketCostKnown ~= right.marketCostKnown then
 		return left.marketCostKnown
+	end
+
+	if left.marketCostKnown and (left.purchaseCost or 0) ~= (right.purchaseCost or 0) then
+		return (left.purchaseCost or 0) < (right.purchaseCost or 0)
 	end
 
 	if left.marketCostKnown and left.marketCost ~= right.marketCost then
@@ -1589,6 +1605,7 @@ local function BuildPlannedMaterialCombination(orderData, selections, missingReq
 	local entries = {}
 	local qualityWeight = 0
 	local scoreTotal = 0
+	local purchaseCost = 0
 	local marketCost = 0
 	local marketCostKnown = true
 	local excludedEntryCount = 0
@@ -1596,6 +1613,7 @@ local function BuildPlannedMaterialCombination(orderData, selections, missingReq
 
 	for _, entry in ipairs(orderData.staticMaterialEntries or {}) do
 		entries[#entries + 1] = entry
+		purchaseCost = purchaseCost + GetEntryPurchaseCost(entry)
 		if entry.marketValueExcluded then
 			excludedEntryCount = excludedEntryCount + 1
 		elseif entry.totalPrice then
@@ -1614,6 +1632,7 @@ local function BuildPlannedMaterialCombination(orderData, selections, missingReq
 			qualityWeight = qualityWeight
 				+ ((QUALITY_WEIGHT_BASE ^ math.max(0, entry.option.reagentQuality or 0)) * (entry.quantity or 0))
 			scoreTotal = scoreTotal + ((entry.option.score or 0) * (entry.quantity or 0))
+			purchaseCost = purchaseCost + GetEntryPurchaseCost(entry)
 			if entry.marketValueExcluded then
 				excludedEntryCount = excludedEntryCount + 1
 			elseif entry.totalPrice then
@@ -1635,6 +1654,7 @@ local function BuildPlannedMaterialCombination(orderData, selections, missingReq
 		missingRequiredSlots = requiredMissing,
 		qualityWeight = qualityWeight,
 		scoreTotal = scoreTotal,
+		purchaseCost = purchaseCost,
 		marketCost = marketCost,
 		marketCostKnown = marketCostKnown,
 		excludedEntryCount = excludedEntryCount,
@@ -1766,45 +1786,49 @@ local function FindCheapestMaterialPlan(orderData, baseline, accepts)
 		return baseline
 	end
 
-	local staticCost = 0
+	local staticPurchase = 0
 	for _, entry in ipairs(orderData.staticMaterialEntries or {}) do
-		if not entry.marketValueExcluded and entry.totalPrice then
-			staticCost = staticCost + entry.totalPrice
-		end
+		staticPurchase = staticPurchase + GetEntryPurchaseCost(entry)
 	end
 
-	-- Variants are sorted by ascending cost, so the first one of each slot is its minimum.
-	local suffixMinCost = {
+	-- Plans are ranked by what is still left to buy (owned reagents are free), then by full market cost.
+	-- Variants are sorted by ascending purchase cost, so the first one of each slot is its minimum.
+	local suffixMinPurchase = {
 		[#planningSlots + 1] = 0,
 	}
 	for index = #planningSlots, 1, -1 do
-		suffixMinCost[index] = suffixMinCost[index + 1] + (planningSlots[index][1].marketCost or 0)
+		suffixMinPurchase[index] = suffixMinPurchase[index + 1] + (planningSlots[index][1].purchaseCost or 0)
 	end
 
 	local bestPlan
-	local bestCost = baseline.marketCost or math.huge
+	local bestPurchase = baseline.purchaseCost or math.huge
+	local bestMarket = baseline.marketCost or math.huge
 	local selections = {}
 	local leafCount = 0
 
-	local function Search(slotIndex, currentCost)
+	local function Search(slotIndex, currentPurchase)
 		if slotIndex > #planningSlots then
 			leafCount = leafCount + 1
 			local candidate = BuildPlannedMaterialCombination(orderData, selections, 0)
-			if candidate.marketCostKnown and candidate.marketCost < bestCost and accepts(candidate) then
+			local purchase = candidate.purchaseCost or math.huge
+			if candidate.marketCostKnown
+				and (purchase < bestPurchase or (purchase == bestPurchase and candidate.marketCost < bestMarket))
+				and accepts(candidate) then
 				bestPlan = candidate
-				bestCost = candidate.marketCost
+				bestPurchase = purchase
+				bestMarket = candidate.marketCost
 			end
 			return
 		end
 
 		for _, variant in ipairs(planningSlots[slotIndex]) do
-			local candidateCost = currentCost + (variant.marketCost or 0)
-			if staticCost + candidateCost + suffixMinCost[slotIndex + 1] >= bestCost then
+			local candidatePurchase = currentPurchase + (variant.purchaseCost or 0)
+			if staticPurchase + candidatePurchase + suffixMinPurchase[slotIndex + 1] > bestPurchase then
 				break
 			end
 
 			selections[#selections + 1] = variant
-			Search(slotIndex + 1, candidateCost)
+			Search(slotIndex + 1, candidatePurchase)
 			selections[#selections] = nil
 
 			if leafCount >= MAX_CHEAPEST_PLAN_LEAVES then
