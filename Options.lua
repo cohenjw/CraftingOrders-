@@ -224,7 +224,21 @@ function Options:BuildPanel()
 		end
 	)
 
-	panel.sourceFooter = CreateLabel(panel, "GameFontHighlightSmall", "", "TOPLEFT", panel.sourceAuctioneer, "BOTTOMLEFT", 0, -10, 640)
+	panel.sourceTSM = CreateRadioButton(
+		panel,
+		L.OPTION_PRICING_TSM,
+		"TOPLEFT",
+		panel.sourceAuctioneer,
+		"BOTTOMLEFT",
+		0,
+		-6,
+		function(self)
+			self:SetChecked(true)
+			ns.SetConfig("pricingSource", "tsm")
+		end
+	)
+
+	panel.sourceFooter = CreateLabel(panel, "GameFontHighlightSmall", "", "TOPLEFT", panel.sourceTSM, "BOTTOMLEFT", 0, -10, 640)
 	panel.preferencesHeader = CreateLabel(panel, "GameFontNormal", L.OPTION_DISPLAY_HEADER, "TOPLEFT", panel.sourceFooter, "BOTTOMLEFT", 0, -18)
 
 	panel.greyUnknownRecipes = CreateCheckButton(
@@ -408,6 +422,7 @@ function Options:BuildPanel()
 		panel.noPricingInfo,
 		panel.sourceAuctionator,
 		panel.sourceAuctioneer,
+		panel.sourceTSM,
 		panel.sourceFooter,
 		panel.preferencesHeader,
 		panel.greyUnknownRecipes,
@@ -471,8 +486,11 @@ function Options:Refresh()
 	LayoutDetectedRadio(self.panel.sourceAuctionator, status.auctionatorDetected, -8)
 	LayoutDetectedRadio(self.panel.sourceAuctioneer, status.auctioneerDetected, visibleSourceCount > 0 and -6 or -8)
 
+	LayoutDetectedRadio(self.panel.sourceTSM, status.tsmDetected, visibleSourceCount > 0 and -6 or -8)
+
 	self.panel.sourceAuctionator:SetChecked(selectedProviderKey == "auctionator")
 	self.panel.sourceAuctioneer:SetChecked(selectedProviderKey == "auctioneer")
+	self.panel.sourceTSM:SetChecked(selectedProviderKey == "tsm")
 
 	self.panel.noPricingInfo:ClearAllPoints()
 	self.panel.noPricingInfo:SetPoint("TOPLEFT", self.panel.sourceHeader, "BOTTOMLEFT", 0, -8)
@@ -487,6 +505,8 @@ function Options:Refresh()
 		self.panel.sourceFooter:SetShown(true)
 		if selectedProviderKey == "auctioneer" then
 			self.panel.sourceFooter:SetText(L.OPTION_PRICING_FOOTER_AUCTIONEER)
+		elseif selectedProviderKey == "tsm" then
+			self.panel.sourceFooter:SetText(L.OPTION_PRICING_FOOTER_TSM)
 		else
 			self.panel.sourceFooter:SetText(L.OPTION_PRICING_FOOTER_AUCTIONATOR)
 		end

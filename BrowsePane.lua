@@ -130,6 +130,7 @@ local ACUITY_CURRENCY_IDS = {
 local QUALITY_TICK_GREEN = "common-icon-checkmark"
 local QUALITY_TICK_AMBER = "common-icon-checkmark-yellow"
 local QUALITY_WEIGHT_BASE = 1000
+local AUCTION_HOUSE_CUT_RATE = 0.05
 local EMPTY_STATE_LOADING_TEXT = L.EMPTY_STATE_LOADING
 local EMPTY_STATE_EMPTY_TEXT = L.EMPTY_STATE_EMPTY
 local EMPTY_STATE_FILTERED_TEXT = L.EMPTY_STATE_FILTERED
@@ -1479,7 +1480,32 @@ local function CompareMaterialPlanPreference(left, right)
 	return false
 end
 
-local function BuildSlotFillVariants(slotData, allowEmpty)
+-- Cost-first ordering: price decides, and the lowest tier only breaks ties or stands in when prices are missing.
+local function CompareMaterialPlanCost(left, right)
+	if (left.excludedEntryCount or 0) ~= (right.excludedEntryCount or 0) then
+		return (left.excludedEntryCount or 0) < (right.excludedEntryCount or 0)
+	end
+
+	if left.marketCostKnown ~= right.marketCostKnown then
+		return left.marketCostKnown
+	end
+
+	if left.marketCostKnown and left.marketCost ~= right.marketCost then
+		return left.marketCost < right.marketCost
+	end
+
+	if (left.qualityWeight or 0) ~= (right.qualityWeight or 0) then
+		return (left.qualityWeight or 0) < (right.qualityWeight or 0)
+	end
+
+	if (left.scoreTotal or 0) ~= (right.scoreTotal or 0) then
+		return (left.scoreTotal or 0) > (right.scoreTotal or 0)
+	end
+
+	return false
+end
+
+local function BuildSlotFillVariants(slotData, allowEmpty, compareVariants)
 	local variants = {}
 	local options = {}
 
@@ -1536,7 +1562,7 @@ local function BuildSlotFillVariants(slotData, allowEmpty)
 	end
 
 	Visit(1, slotData.quantityRequired or 0)
-	table.sort(variants, CompareMaterialPlanPreference)
+	table.sort(variants, compareVariants or CompareMaterialPlanPreference)
 	return variants
 end
 
@@ -1706,6 +1732,112 @@ local function FindReachableMaterialPlan(orderData, requiredQuality)
 	return bestPlan
 end
 
+local MAX_CHEAPEST_PLAN_LEAVES = 250
+
+-- Looks for a plan that costs strictly less than `baseline` while `accepts` still holds, so a cheaper higher tier
+-- replaces a pricier lower tier. Returns `baseline` when prices are missing or nothing cheaper qualifies.
+local function FindCheapestMaterialPlan(orderData, baseline, accepts)
+	if not (baseline and baseline.marketCostKnown and (baseline.missingRequiredSlots or 0) == 0) then
+		return baseline
+	end
+
+	local planningSlots = {}
+	for _, slotData in ipairs(orderData.mutableSlots or {}) do
+		if slotData.dataSlotType == MUTABLE_SLOT_TYPE
+			and not slotData.covered
+			and not slotData.locked
+			and ShouldConsiderOptionalSlot(slotData) then
+			local variants = {}
+			for _, variant in ipairs(BuildSlotFillVariants(slotData, not slotData.required, CompareMaterialPlanCost)) do
+				if variant.marketCostKnown and (variant.excludedEntryCount or 0) == 0 then
+					variants[#variants + 1] = variant
+				end
+			end
+
+			if #variants == 0 then
+				return baseline
+			end
+
+			planningSlots[#planningSlots + 1] = variants
+		end
+	end
+
+	if #planningSlots == 0 then
+		return baseline
+	end
+
+	local staticCost = 0
+	for _, entry in ipairs(orderData.staticMaterialEntries or {}) do
+		if not entry.marketValueExcluded and entry.totalPrice then
+			staticCost = staticCost + entry.totalPrice
+		end
+	end
+
+	-- Variants are sorted by ascending cost, so the first one of each slot is its minimum.
+	local suffixMinCost = {
+		[#planningSlots + 1] = 0,
+	}
+	for index = #planningSlots, 1, -1 do
+		suffixMinCost[index] = suffixMinCost[index + 1] + (planningSlots[index][1].marketCost or 0)
+	end
+
+	local bestPlan
+	local bestCost = baseline.marketCost or math.huge
+	local selections = {}
+	local leafCount = 0
+
+	local function Search(slotIndex, currentCost)
+		if slotIndex > #planningSlots then
+			leafCount = leafCount + 1
+			local candidate = BuildPlannedMaterialCombination(orderData, selections, 0)
+			if candidate.marketCostKnown and candidate.marketCost < bestCost and accepts(candidate) then
+				bestPlan = candidate
+				bestCost = candidate.marketCost
+			end
+			return
+		end
+
+		for _, variant in ipairs(planningSlots[slotIndex]) do
+			local candidateCost = currentCost + (variant.marketCost or 0)
+			if staticCost + candidateCost + suffixMinCost[slotIndex + 1] >= bestCost then
+				break
+			end
+
+			selections[#selections + 1] = variant
+			Search(slotIndex + 1, candidateCost)
+			selections[#selections] = nil
+
+			if leafCount >= MAX_CHEAPEST_PLAN_LEAVES then
+				return
+			end
+		end
+	end
+
+	Search(1, 0)
+	return bestPlan or baseline
+end
+
+-- Picks the cheapest plan that is as good as `baseline`: same quality outcome and no extra concentration.
+local function ChooseCheapestPlan(orderData, baseline, requiredQuality, mustMeetWithoutConcentration)
+	local baselineConcentrationCost = baseline and baseline.operationInfo and baseline.operationInfo.concentrationCost or 0
+
+	return FindCheapestMaterialPlan(orderData, baseline, function(candidate)
+		local operation = candidate.operationInfo
+		if not operation then
+			return false
+		end
+
+		local qualityOk
+		if mustMeetWithoutConcentration then
+			qualityOk = MeetsRequiredQuality(operation, requiredQuality)
+		else
+			qualityOk = CanReachRequiredQuality(operation, requiredQuality)
+		end
+
+		return qualityOk and (operation.concentrationCost or 0) <= baselineConcentrationCost
+	end)
+end
+
 local function EvaluateQualityRequirement(orderData)
 	local requiredQuality = orderData.requiredQuality or 0
 	local minimumQuality = GetMinimumRequiredQuality(orderData.recipeInfo)
@@ -1717,7 +1849,7 @@ local function EvaluateQualityRequirement(orderData)
 			minimumQuality = minimumQuality,
 			requiredQuality = requiredQuality,
 			lowestPlan = lowestPlan,
-			activePlan = lowestPlan,
+			activePlan = ChooseCheapestPlan(orderData, lowestPlan, requiredQuality, true),
 		}
 	end
 
@@ -1729,7 +1861,7 @@ local function EvaluateQualityRequirement(orderData)
 			state = "green",
 			lowestPlan = lowestPlan,
 			reachablePlan = lowestPlan,
-			activePlan = lowestPlan,
+			activePlan = ChooseCheapestPlan(orderData, lowestPlan, requiredQuality, true),
 		}
 	end
 
@@ -1741,7 +1873,7 @@ local function EvaluateQualityRequirement(orderData)
 			state = "amber",
 			lowestPlan = lowestPlan,
 			reachablePlan = lowestPlan,
-			activePlan = lowestPlan,
+			activePlan = ChooseCheapestPlan(orderData, lowestPlan, requiredQuality, false),
 		}
 	end
 
@@ -1754,7 +1886,7 @@ local function EvaluateQualityRequirement(orderData)
 			state = "amber",
 			lowestPlan = lowestPlan,
 			reachablePlan = reachablePlan,
-			activePlan = reachablePlan,
+			activePlan = ChooseCheapestPlan(orderData, reachablePlan, requiredQuality, false),
 		}
 	end
 
@@ -1962,9 +2094,14 @@ local function EvaluateRewardValue(order)
 		}
 	end
 
+	-- Reward items are sold on the auction house, which keeps a cut; the gold tip is paid out in full.
+	local auctionHouseCut = math.floor(rewardItemValue * AUCTION_HOUSE_CUT_RATE)
+	rewardItemValue = rewardItemValue - auctionHouseCut
+
 	return {
 		gold = rewardGold,
 		itemValue = rewardItemValue,
+		auctionHouseCut = auctionHouseCut,
 		totalValue = rewardGold + rewardItemValue,
 		hasPriceData = rewardItemValue > 0,
 		isPriceComplete = marketableRewardCount > 0 and pricedRewardCount == marketableRewardCount,
@@ -3018,6 +3155,19 @@ function Pane:ShowRewardTooltip(row)
 	end
 
 	if row.order.reward.hasPriceData then
+		local auctionHouseCut = row.order.reward.auctionHouseCut or 0
+		if auctionHouseCut > 0 then
+			GameTooltip:AddDoubleLine(
+				L.TOOLTIP_AUCTION_HOUSE_CUT,
+				FormatSignedMoney(-auctionHouseCut),
+				1,
+				1,
+				1,
+				RED_FONT_COLOR.r,
+				RED_FONT_COLOR.g,
+				RED_FONT_COLOR.b
+			)
+		end
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddDoubleLine(L.TOOLTIP_TOTAL, Util.FormatMoney(row.order.reward.totalValue), 1, 1, 1, 1, 1, 1)
 	end
@@ -3618,6 +3768,9 @@ function Pane:UpdateToolbar()
 	if provider and provider.key == "auctioneer" then
 		self.createListButton.tooltipTitle = L.TOOLBAR_EXPORT_SHOPPING_LIST
 		self.createListButton.tooltipText = L.TOOLBAR_EXPORT_AUCTIONEER_TOOLTIP
+	elseif provider and provider.key == "tsm" and not Pricing:GetStatus().auctionatorDetected then
+		self.createListButton.tooltipTitle = L.TOOLBAR_SHOPPING_LIST_UNAVAILABLE
+		self.createListButton.tooltipText = L.TOOLBAR_TSM_NEEDS_AUCTIONATOR_TOOLTIP
 	elseif provider then
 		self.createListButton.tooltipTitle = L.TOOLBAR_CREATE_SHOPPING_LIST
 		self.createListButton.tooltipText = L.TOOLBAR_CREATE_AUCTIONATOR_TOOLTIP
@@ -3626,14 +3779,15 @@ function Pane:UpdateToolbar()
 		self.createListButton.tooltipText = L.TOOLBAR_INSTALL_PRICING_TOOLTIP
 	end
 
-	if selectedCount == 0 then
-		if provider then
-			self.createListButton.tooltipText = L.TOOLBAR_SELECT_ORDERS_TOOLTIP
-		else
-			self.createListButton.tooltipText = L.TOOLBAR_INSTALL_AND_SELECT_TOOLTIP
-		end
+	local canExport = provider ~= nil
+		and not (provider.key == "tsm" and not Pricing:GetStatus().auctionatorDetected)
+
+	if selectedCount == 0 and canExport then
+		self.createListButton.tooltipText = L.TOOLBAR_SELECT_ORDERS_TOOLTIP
+	elseif selectedCount == 0 and not provider then
+		self.createListButton.tooltipText = L.TOOLBAR_INSTALL_AND_SELECT_TOOLTIP
 	end
-	self.createListButton:SetEnabled(selectedCount > 0 and provider ~= nil)
+	self.createListButton:SetEnabled(selectedCount > 0 and canExport)
 
 	if self.filterButton then
 		SetFallbackFilterButtonLabel(self.filterButton, L.TOOLBAR_FILTER_BUTTON)
