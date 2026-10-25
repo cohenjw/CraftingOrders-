@@ -125,6 +125,11 @@ function Options:UpdateScrollLayout()
 	local scrollWidth = scrollFrame:GetWidth() or 0
 	if scrollWidth > 0 then
 		scrollChild:SetWidth(math.max(660, math.floor(scrollWidth - 24)))
+
+		-- The pricing hint sits under the indented TSM options, so keep it inside the visible area on narrow windows.
+		if self.panel.sourceFooter then
+			self.panel.sourceFooter:SetWidth(math.max(240, math.min(640, math.floor(scrollWidth - 72))))
+		end
 	end
 
 	local top = scrollChild:GetTop()
