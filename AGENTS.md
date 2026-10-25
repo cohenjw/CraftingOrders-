@@ -282,7 +282,7 @@ Important:
 
 - Auctionator
 - Auctioneer
-- TradeSkillMaster (`DBMinBuyout` through `TSM_API`; shopping export still goes through Auctionator)
+- TradeSkillMaster (price source set by `tsmPriceSource`, default `DBMinBuyout`, through `TSM_API`; shopping export still goes through Auctionator)
 
 Only one pricing provider is selected at a time.
 

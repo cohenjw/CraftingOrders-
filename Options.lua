@@ -93,6 +93,19 @@ local function SetSliderEnabled(slider, enabled)
 	slider:SetAlpha(enabled and 1 or 0.45)
 end
 
+local function SetRadioEnabled(radio, enabled)
+	if not radio then
+		return
+	end
+
+	radio:SetEnabled(enabled)
+	radio:EnableMouse(enabled)
+	radio:SetAlpha(enabled and 1 or 0.45)
+	if radio.label then
+		radio.label:SetFontObject(enabled and "GameFontHighlight" or "GameFontDisable")
+	end
+end
+
 local function UpdatePercentSliderText(slider, prefix, value)
 	if not slider or not slider.Text then
 		return
@@ -238,7 +251,28 @@ function Options:BuildPanel()
 		end
 	)
 
-	panel.sourceFooter = CreateLabel(panel, "GameFontHighlightSmall", "", "TOPLEFT", panel.sourceTSM, "BOTTOMLEFT", 0, -10, 640)
+	panel.tsmSourceRadios = {}
+	local previousTSMRadio = panel.sourceTSM
+	for _, priceSource in ipairs(ns.Pricing.TSM_PRICE_SOURCES) do
+		local radio = CreateRadioButton(
+			panel,
+			L["OPTION_TSM_SOURCE_" .. priceSource:upper()],
+			"TOPLEFT",
+			previousTSMRadio,
+			"BOTTOMLEFT",
+			previousTSMRadio == panel.sourceTSM and 24 or 0,
+			-4,
+			function(self)
+				self:SetChecked(true)
+				ns.SetConfig("tsmPriceSource", priceSource)
+			end
+		)
+		radio.priceSource = priceSource
+		panel.tsmSourceRadios[#panel.tsmSourceRadios + 1] = radio
+		previousTSMRadio = radio
+	end
+
+	panel.sourceFooter = CreateLabel(panel, "GameFontHighlightSmall", "", "TOPLEFT", previousTSMRadio, "BOTTOMLEFT", 0, -10, 640)
 	panel.preferencesHeader = CreateLabel(panel, "GameFontNormal", L.OPTION_DISPLAY_HEADER, "TOPLEFT", panel.sourceFooter, "BOTTOMLEFT", 0, -18)
 
 	panel.greyUnknownRecipes = CreateCheckButton(
@@ -440,6 +474,10 @@ function Options:BuildPanel()
 		panel.footer,
 	}
 
+	for _, radio in ipairs(panel.tsmSourceRadios) do
+		panel.scrollWidgets[#panel.scrollWidgets + 1] = radio
+	end
+
 	for _, widget in ipairs(panel.scrollWidgets) do
 		widget:SetParent(panel.scrollChild)
 	end
@@ -492,6 +530,24 @@ function Options:Refresh()
 	self.panel.sourceAuctioneer:SetChecked(selectedProviderKey == "auctioneer")
 	self.panel.sourceTSM:SetChecked(selectedProviderKey == "tsm")
 
+	-- The sub-options sit under the TSM radio and only apply while TSM is the active pricing source.
+	local tsmPriceSource = ns.Pricing:GetTSMPriceSource()
+	local tsmSelected = selectedProviderKey == "tsm"
+	local previousTSMRadio = self.panel.sourceTSM
+	for _, radio in ipairs(self.panel.tsmSourceRadios) do
+		radio:ClearAllPoints()
+		if status.tsmDetected then
+			radio:SetPoint("TOPLEFT", previousTSMRadio, "BOTTOMLEFT", previousTSMRadio == self.panel.sourceTSM and 24 or 0, -4)
+			radio:Show()
+			radio:SetChecked(radio.priceSource == tsmPriceSource)
+			SetRadioEnabled(radio, tsmSelected)
+			previousTSMRadio = radio
+			lastPricingAnchor = radio
+		else
+			radio:Hide()
+		end
+	end
+
 	self.panel.noPricingInfo:ClearAllPoints()
 	self.panel.noPricingInfo:SetPoint("TOPLEFT", self.panel.sourceHeader, "BOTTOMLEFT", 0, -8)
 	self.panel.noPricingInfo:SetShown(visibleSourceCount == 0)
@@ -506,7 +562,7 @@ function Options:Refresh()
 		if selectedProviderKey == "auctioneer" then
 			self.panel.sourceFooter:SetText(L.OPTION_PRICING_FOOTER_AUCTIONEER)
 		elseif selectedProviderKey == "tsm" then
-			self.panel.sourceFooter:SetText(L.OPTION_PRICING_FOOTER_TSM)
+			self.panel.sourceFooter:SetText(L["OPTION_PRICING_FOOTER_TSM_" .. tsmPriceSource:upper()])
 		else
 			self.panel.sourceFooter:SetText(L.OPTION_PRICING_FOOTER_AUCTIONATOR)
 		end

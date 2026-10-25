@@ -4415,6 +4415,7 @@ local function DoesReasonBumpGeneration(reason)
 	return reason == "pricing-db"
 		or reason == "trade-skill-source"
 		or configKey == "pricingSource"
+		or configKey == "tsmPriceSource"
 end
 
 local function IsRenderOnlyConfigKey(configKey)
@@ -4792,7 +4793,7 @@ function Pane:MarkDirty(reason)
 		else
 			self.needsRebuild = true
 		end
-	elseif configKey == "pricingSource" then
+	elseif configKey == "pricingSource" or configKey == "tsmPriceSource" then
 		self.needsRebuild = true
 	elseif IsRenderOnlyConfigKey(configKey) then
 		self.needsRender = true

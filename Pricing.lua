@@ -43,7 +43,20 @@ local providers = {
 	},
 }
 
-local TSM_PRICE_SOURCE = "DBMinBuyout"
+-- TSM price sources offered in the options. The first entry is the default.
+local TSM_PRICE_SOURCES = { "DBMinBuyout", "DBMarket", "DBRecent", "DBHistorical", "DBRegionMarketAvg" }
+Pricing.TSM_PRICE_SOURCES = TSM_PRICE_SOURCES
+
+function Pricing:GetTSMPriceSource()
+	local selected = ns.GetConfig and ns.GetConfig("tsmPriceSource")
+	for _, key in ipairs(TSM_PRICE_SOURCES) do
+		if key == selected then
+			return key
+		end
+	end
+
+	return TSM_PRICE_SOURCES[1]
+end
 
 local function NormalizeUnitPrice(value)
 	if type(value) ~= "number" or value ~= value or value <= 0 then
@@ -206,7 +219,7 @@ local function GetTSMPrice(item)
 		return nil
 	end
 
-	local ok, value = pcall(TSM_API.GetCustomPriceValue, TSM_PRICE_SOURCE, "i:" .. itemID)
+	local ok, value = pcall(TSM_API.GetCustomPriceValue, Pricing:GetTSMPriceSource(), "i:" .. itemID)
 	return NormalizeUnitPrice(ok and value or nil)
 end
 
