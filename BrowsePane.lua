@@ -1851,14 +1851,13 @@ local function ChooseCheapestPlan(orderData, baseline, requiredQuality, mustMeet
 			return false
 		end
 
-		local qualityOk
-		if mustMeetWithoutConcentration then
-			qualityOk = MeetsRequiredQuality(operation, requiredQuality)
-		else
-			qualityOk = CanReachRequiredQuality(operation, requiredQuality)
+		if MeetsRequiredQuality(operation, requiredQuality) then
+			return true
 		end
 
-		return qualityOk and (operation.concentrationCost or 0) <= baselineConcentrationCost
+		return not mustMeetWithoutConcentration
+			and CanReachRequiredQuality(operation, requiredQuality)
+			and (operation.concentrationCost or 0) <= baselineConcentrationCost
 	end)
 end
 
